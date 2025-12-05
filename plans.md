@@ -4,4 +4,8 @@ Goal: create a universal (MCP-style) way for devices of all sizes to communicate
 
 # LAM
 
-Make an actual Large Action Model (Rabbit did not :< )
+Goal: Make an actual Large Action Model (Rabbit did not :< )
+
+# Secure Clients
+
+Goal: Develop a comprehensive end-to-encrypted API and ecosystem which supports inter-key and intra-key security. And make it practical
