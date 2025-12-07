@@ -13,3 +13,7 @@ Goal: Develop a comprehensive end-to-encrypted API and ecosystem which supports 
 # TripSwitch
 
 Goal: Create a comprehensive set of measurements for any and all security events, then deprecate Secure Boot as it'd no longer be needed.
+
+# moond
+
+Goal: Statically recompile the moon landing systems to run on commodity microprocessors, and add integration so consumers can depend on the ENTIRE moon landing
