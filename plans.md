@@ -10,6 +10,10 @@ Goal: Make an actual Large Action Model (Rabbit did not :< )
 
 Goal: Develop a comprehensive end-to-encrypted API and ecosystem which supports inter-key and intra-key security. And make it practical
 
+# aer
+
+Goal: Create a flagship end-to-end encrypted document suite that can be quickly onboarded
+
 # TripSwitch
 
 Goal: Create a comprehensive set of measurements for any and all security events, then deprecate Secure Boot as it'd no longer be needed.
