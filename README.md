@@ -1,13 +1,14 @@
 # @portal-solutions/plans
 
 ## Description
-Project plans
+Project management or planning tool ("plans"), possibly parsing markdown plans (`parse-markdown.js`).
 
 ## Goals
-- [ ] Add project goals
+- [ ] Parse project plans
+- [ ] Visualize/Manage status
 
 ## Progress
-- [ ] Initial setup
+- [ ] Package setup
 
 ---
 *AI assisted*
