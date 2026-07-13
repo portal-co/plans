@@ -127,10 +127,12 @@ Two crates are already *mostly* generic but carry speet naming:
 
 | New crate / doc | Purpose | Horizon |
 |---|---|---|
-| `os-page` | Common `PageTable`, `GuestMemory`, and `MemoryBackend` traits extracted from `vane-arch::Mem` and `speet-memory`. Initially shaped by riscv64 legacy/shared modes and speet's compile-time paging; extended to new targets only when those targets exist in a consuming repo. | Phase 2 |
-| `os-page-codegen` | Compile-time emitters for memory/paging helpers. | Phase 2 |
+| `os-page` | Common `PageTable`, `GuestMemory`, and runtime memory backends (`LegacyOnDemand`, `SharedPageTable`, `LinearHost`) extracted from `vane-arch::Mem` and `speet-memory`. | Phase 2 |
+| `os-page-codegen` | Compile-time memory/paging emitters, including a `JsBackend` that emits `data(addr)`/`DataView` helpers matching vane's JS memory idiom, and a `WaxBackend` memory-access recipe. | Phase 2 |
 | `os-build` | Compile-time trait set **generic over `Backend`** whose `BuildGlue` trait uses `GuestMemory`, `PageTable`, `SyscallCodegen`, `RedirectCodegen`, and `MemoryCodegen` as supertraits. It emits `OsOp` stack operations onto a `Backend` to answer recompiler-level questions (jump to address, guest memory access, state layout). Implemented by `@speet`'s module builders and `@vane`'s JS JIT. | Phase 1 |
-| `os-target-core` | Shared stack IR / operation format (`OsOp`) + `Backend` trait, extracted from `vane-target-core::StackOp` / `CoreOpcode`. Provides `WaxBackend<T: InstructionSink>` for WASM-like targets (WASM binary and `wasm-blitz` WASM), plus separate backends for JS, `StackOp`, future LLVM, and future `wasm-blitz` direct native. | Phase 2 |
+| `os-target-core` | Shared stack IR / operation format (`OsOp`) + `Backend` trait, extracted from `vane-target-core::StackOp` / `CoreOpcode`. | Phase 1 |
+| `os-target-wax` | `WaxBackend<T: InstructionSink>` for WASM-like targets (plain WASM binary, `@wax/wax-core` native path, and post-refactor `wasm-blitz` WASM). | Phase 2 |
+| `os-target-native` | Native-text backend(s) using raw `asm-arch` crates and the SysV ABI; initial target is x86-64. | Phase 3 |
 | `os-async` | Async variants of `OS`, `Ctx`, `HostApi`, and stack-host hooks. Makes vane's `AsyncStackHost` / `async_mem` pattern available to all backends, including future assembly paths. | Phase 3 |
 | `osctx-vkernel` | Concrete `OS` + `Ctx` impl driving the shared virtual kernel from container-plan. | Future work |
 | `osctx-ptrace` | The planned `PtraceLayer` trait and dynamic interception layer. | Future work |
@@ -747,11 +749,10 @@ External foundational dependencies (not duplicated inside `os-emulation`)
 ├── wax-core                 ← single source of truth in `portal-co/wax`; consumed by `os-linux-wasi`, `os-page-codegen`, `os-abi-codegen`, and `@speet` native backends
 
 os-emulation
-├── runtime
-│   ├── os-ctx               ← no_std / std / WASM
-│   └── os-host-api          ← depends on os-ctx
 ├── target
-│   └── os-target-core       ← no_std shared operation IR + Backend trait (WaxBackend<T> for wax-core sinks is scaffolding)
+│   ├── os-target-core       ← no_std shared operation IR + Backend trait
+│   ├── os-target-wax        ← WaxBackend<T: InstructionSink> for WASM-like targets
+│   └── os-target-native     ← SysV textual native assembly backend (x86-64 first)
 ├── abi
 │   ├── os-abi-spec
 │   ├── os-abi-codegen       ← depends on os-abi-spec, os-build, os-target-core
@@ -764,12 +765,11 @@ os-emulation
 ├── emit
 │   ├── os-syscall-emit      ← generic `SyscallTable`/`SyscallEntry` data model (no_std + alloc)
 │   └── os-linux-wasi        ← depends on os-syscall-emit
-└── runtime (future)
-    ├── os-manifest          — future work
-    ├── os-async             ← async OS / Ctx / HostApi surface; depends on os-ctx — Phase 3
-    ├── os-plugin            — future work
-    └── osctx-ptrace         ← depends on os-ctx — future work
-    └── os-vkernel           ← depends on os-ctx, os-manifest, os-page (std) — future work
+└── runtime
+    ├── os-ctx                 ← no_std / std / WASM guest OS / Ctx traits
+    ├── os-host-api            ← depends on os-ctx
+    ├── os-async               ← async OS / Ctx / HostApi surface; depends on os-ctx
+    └── (future: os-manifest, os-plugin, osctx-ptrace, os-vkernel)
 
 @speet (after migration)
 ├── helper/*                 (stays)
@@ -793,14 +793,15 @@ os-emulation
 │   └── speet-rtd            → depends on speet-runtime
 
 @vane (after Phase 2/3)
-├── vane-arch                → depends on os-page, os-page-codegen
+├── vane-arch                → depends on os-page, os-async
 │   └── Mem implements os-page::GuestMemory
+│   └── AsyncOsHost implements AsyncStackHost by delegating to os-async traits
 ├── vane-riscv               → stays
-├── vane-target-core         → depends on os-target-core (shared `OsOp`)
-├── vane-target-js           → depends on os-target-core, os-page-codegen, os-abi-codegen, os-async
+├── vane-target-core         → depends on os-target-core; provides StackOpBackend (OsOp → StackOp)
+├── vane-target-js           → [ASPIRATIONAL until wired] depends on os-target-core, os-page-codegen, os-abi-codegen
 │   └── CoreJS/data() generator implements os-page-codegen::MemoryCodegen
 │   └── JS host-call stubs implement os-abi-codegen redirect recipes
-├── vane-target-wasm         → depends on os-abi-codegen, os-build
+├── vane-target-wasm         → [ASPIRATIONAL] depends on os-abi-codegen, os-build
 └── vane                     → wires above, depends on os-page, os-host-api
 ```
 
@@ -817,9 +818,12 @@ os-emulation
 | WASI import registration and ABI mapping | `crates/emit/os-linux-wasi/tests/` |
 | Page-table invariants (legacy, shared, both modes) | `crates/page/os-page/tests/` |
 | Memory codegen parity: same `MemorySpec` produces equivalent JS and WASM helpers | `crates/page/os-page-codegen/tests/` |
-| Syscall codegen invariants (sortedness, param count match) | `crates/core/os-syscall-emit/tests/` |
+| Syscall codegen invariants (sortedness, param count match) | `crates/emit/os-syscall-emit/tests/` |
 | BuildGlue<B> mock implementation, including jump-to-address and state-layout answers for a test backend | `crates/build/os-build/tests/` |
-| `os-target-core` roundtrips: render `OsOp` through every supported `Backend` (WaxBackend<MockSink>, JS, StackOp) | `crates/target/os-target-core/tests/` |
+| `os-target-core` unit tests: `Vec<OsOp>` Backend, `GuestAddr` helpers | `crates/target/os-target-core/tests/` |
+| `os-target-wax` tests: render `OsOp` to WASM / `wax-core::InstructionSink` | `crates/target/os-target-wax/tests/` |
+| `os-target-native` tests: render `OsOp` to x86-64 SysV assembly text | `crates/target/os-target-native/tests/` |
+| `vane-target-core` tests: `StackOpBackend` lowers a representative `OsOp` sequence to `StackOp` | live in `@vane` |
 | `os-async` mock tests: async syscall dispatch in JS and synchronous fallback in WASM | `crates/runtime/os-async/tests/` |
 | Native helper parity (unit-render only): `@wax/wax-core` and `wasm-blitz` NaiveAbi shims (`__wasm_memory_grow`, etc.) produce equivalent effects to WASM `memory.grow` | `crates/core/os-page-codegen/tests/native_helpers.rs` |
 
@@ -901,7 +905,9 @@ This prevents accidental trait breakages in SOEL from breaking consumers without
      os-page-codegen = { path = "os-emulation/crates/page/os-page-codegen" }
      os-syscall-emit = { path = "os-emulation/crates/emit/os-syscall-emit" }
      os-linux-wasi   = { path = "os-emulation/crates/emit/os-linux-wasi" }
-     # os-async        = { path = "os-emulation/crates/runtime/os-async" }  # Phase 3
+     os-target-wax   = { path = "os-emulation/crates/target/os-target-wax" }
+     os-target-native = { path = "os-emulation/crates/target/os-target-native" }
+     os-async        = { path = "os-emulation/crates/runtime/os-async" }
      # os-redirect-stubs = { path = "os-emulation/crates/abi/os-redirect-stubs" }  # Future expansion
      ```
 
