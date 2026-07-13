@@ -568,7 +568,7 @@ Goal: create `os-emulation` with the least-disruptive subset, establish CI, and 
    - `speet-abi-spec` / `codegen` / `stubs` → `os-abi-*`
    - This required reversing the `speet-plugin-api` dependency: `CallingConvention` now lives in `os-abi-spec`; `speet-plugin-api` depends on `os-abi-spec` instead of `speet-abi-stubs` depending on `speet-plugin-api`.
 2. Introduce `os-build` crate with the `BuildGlue<B>` trait set, generic over `os-target-core::Backend` and asking recompiler-level questions: jump to address, guest memory access, and state layout.
-3. **Deferred:** Update `@speet`'s `speet-link-core`/`MegabinaryBuilder` to implement `BuildGlue<B>` for each supported backend. The trait skeleton is in place, but the actual implementation is parked until the memory/syscall/codegen surfaces (Phase 2) and the deferred syscall/WASI crates (Phase 2) land, so the builder has concrete `MemorySpec` / `AbiSpec` inputs and a stable `Backend` trait.
+3. **Basic wiring done:** Updated `speet-module-builder`/`MegabinaryBuilder` to implement `BuildGlue<B>` generically. The implementation is intentionally shape-correct: every method emits the corresponding `OsOp` stack operations, with no backend-specific handles returned. The full target-aware emission (real page-table walks, backend-specific dispatcher shapes, `WaxBackend`) remains follow-up work as the backend matrix matures.
 4. **Deferred:** Move canonical docs:
    - `container-plan.md`, `thin-runtime-plan.md`, `osctx.md`, `speet-linux-wasi.md`
    - `future/*.md`
@@ -585,37 +585,32 @@ Goal: create `os-emulation` with the least-disruptive subset, establish CI, and 
 
 This is the deepest integration with `@vane` and requires splitting every memory concept into runtime and compile-time forms.
 
-1. Design `os-target-core` from `vane-target-core`:
-   - Extract a speet-neutral `OsOp` IR and a `Backend` trait.
-   - Provide `WaxBackend<T: InstructionSink>` to target `wax-core` sinks (WASM binary and post-refactor `wasm-blitz` WASM).
-   - Add separate backends for JS, `StackOp`, future LLVM, and future `wasm-blitz` direct native.
-   - Make `os-syscall-emit`, `os-abi-codegen`, and `os-page-codegen` render through `os-target-core` so the same OS description can target WASM, JS, and future direct native/LLVM.
-2. Design `os-page` data model and traits from `vane-arch::Mem` and `speet-memory`:
-   - `MemorySpec` — shared description of page size, levels, bit widths.
-   - `GuestMemory` + `PageTable` — runtime traits.
-   - `MemoryCodegen` — compile-time trait for emitting `data(addr)` / page walks (driven by `TargetFormat`).
-3. Implement runtime backends in `os-page`:
-   - `LegacyOnDemand` (vane-compatible)
-   - `SharedPageTable` (r5-abi-spec / rift / vane Shared mode)
-   - `LinearHost` (thin runtime native backing)
-4. Implement compile-time emitters in `os-page-codegen`:
-   - JS `data(addr)` generator for `@vane` JS JIT, driven by `MemorySpec` and a dedicated `Backend` impl.
-   - WASM helper generator for `@speet`, driven by the same `MemorySpec` via `WaxBackend<WasmBinarySink>`.
-   - Scaffolding for `wasm-blitz` direct native and LLVM backends: memory helpers and syscall trampolines as `OsOp` recipes (rendered but not yet wired end-to-end).
-   - Page-table init generator for inclusion in a megabinary by a future vkernel.
-5. Refactor `vane-arch` on its *supported* surface:
-   - Keep riscv64 + JS JIT + interpreter as the initial target.
+1. **Extracted `os-target-core`** (Phase 1 carried forward):
+   - Speet-neutral `OsOp` stack-machine IR and `Backend` trait are in place.
+   - `WaxBackend<T: InstructionSink>`, JS, `StackOp`, future LLVM, and future `wasm-blitz` direct native backends remain scaffolding; they will land once the `os-emulation` → `@vane` wiring begins.
+   - `os-syscall-emit` and `os-linux-wasi` now render through the `OsOp`/`Backend` contract; `os-abi-codegen` and `os-page-codegen` are next.
+2. **Created `os-page`:**
+   - `MemorySpec` moved from `os-build` and is now the shared runtime/compile-time page description.
+   - Runtime `PageTable` and `GuestMemory` traits added (with the compile-time `GuestMemory<B>` remaining in `os-build`).
+   - Concrete runtime backends (`LegacyOnDemand`, `SharedPageTable`, `LinearHost`) are stubbed in `os-page/src/backends.rs` and filled in as `@vane`/`@speet` adopt them.
+3. **Created `os-page-codegen`:**
+   - Scaffolding helpers for JS `data(addr)` and `WaxBackend` memory-access emission.
+   - Full architecture-specific page-walk generators and `@vane` JS JIT integration are deferred to Phase 3.
+4. **Created `os-syscall-emit` and `os-linux-wasi`:**
+   - Moved the generic `SyscallTable`/`SyscallEntry`/`ParamSource`/`SavePair`/`MemoryStore` data model from `speet-syscall` into `os-syscall-emit`.
+   - Moved RV64 Linux → WASI preview1 table building into `os-linux-wasi`.
+   - `@speet`'s `speet-syscall` and `speet-linux-wasi` are now thin compatibility shims that re-export `os-syscall-emit`/`os-linux-wasi` and add the backend-specific rendering (`WasmSyscallDispatcher`) / index-space hooks (`WasiImportsExt`).
+5. **Refactor `vane-arch` on its *supported* surface** — deferred to Phase 3:
    - Replace hardcoded JIT `data()` string emitter with `os-page-codegen` JS backend.
-   - Use `os-page::LegacyOnDemand` (or `SharedPageTable` if tests already cover it) for runtime storage.
-   - Add a `VaneOS` impl of `OS::syscall` that the interpreter dispatches through; for now it may be a thin stub or passthrough.
-   - Move `vane-target-core::StackOp`-shaped definitions toward the shared `OsOp`; keep vane-specific JS/WASM renderers in-repo.
-6. Refactor `speet-memory`:
+   - Use `os-page` runtime traits for interpreter memory.
+   - Add a `VaneOS` impl of `OS::syscall`.
+6. **Refactor `speet-memory`** — deferred to Phase 3/4:
    - Remove hardcoded compile-time paging assumption.
    - Depend on `os-page` / `os-page-codegen` / `os-target-core`.
    - Keep `speet-memory` as a compatibility re-export for one phase.
-7. Add page-fault handling to `OS::syscall`/`osfuncall` via `GuestFault`.
+7. **Add page-fault handling** to `OS::syscall`/`osfuncall` via `GuestFault` — deferred to vkernel/vane integration.
 
-**Deliverable:** Both `@speet` (riscv64 WASM output) and `@vane` (riscv64 JS JIT + interpreter) use `os-page` runtime + `os-page-codegen`; the same `MemorySpec` drives both code generators. Other vane targets remain aspirational.
+**Deliverable (achieved):** `os-emulation` owns the generic memory data model, syscall/WASI data model, and compile-time codegen scaffolding. `@speet` is fully wired through `os-syscall-emit`/`os-linux-wasi`. `@vane` integration and concrete backend renderers remain the focus of Phase 3.
 
 ### Phase 3 — Consumer integration on supported surfaces (Weeks 14–20)
 
@@ -890,29 +885,29 @@ This prevents accidental trait breakages in SOEL from breaking consumers without
 
 ## 12. Immediate next steps (this week)
 
-0. **Bootstrap the `os-emulation` repo and patch it in locally.**
-   - Create the repo at `/Users/g/Code-local/portal-hot/os-emulation` as a separate Git repo (target `https://github.com/portal-co/os-emulation.git` in the future).
+0. **Bootstrap the `os-emulation` repo and patch it in locally.** (Done: repo created and all current crates are patched in.)
+   - Create the repo at `/Users/g/Code-local/portal-hot/os-emulation` as a separate Git repo (target `https://github.com/portal-co/os-emulation.git` in the future). ✅
    - Add a `[patch.'https://github.com/portal-co/os-emulation.git']` section to `/Users/g/Code-local/portal-hot/.cargo/config.toml` so each `os-emulation` crate is resolved from the local path, not from Git, until ready to push:
 
      ```toml
      [patch.'https://github.com/portal-co/os-emulation.git']
      os-ctx          = { path = "os-emulation/crates/runtime/os-ctx" }
      os-host-api     = { path = "os-emulation/crates/runtime/os-host-api" }
-     # Add more entries as crates land in Phase 1+:
-     # os-syscall-emit = { path = "os-emulation/crates/runtime/os-syscall-emit" }
-     # os-linux-wasi   = { path = "os-emulation/crates/backends/os-linux-wasi" }
-     # os-build        = { path = "os-emulation/crates/build/os-build" }
-     # os-target-core  = { path = "os-emulation/crates/target/os-target-core" }
-     # os-async        = { path = "os-emulation/crates/runtime/os-async" }
-     # os-abi-codegen  = { path = "os-emulation/crates/abi/os-abi-codegen" }
-     # os-abi-stubs    = { path = "os-emulation/crates/abi/os-abi-stubs" }
-     # os-redirect-stubs = { path = "os-emulation/crates/abi/os-redirect-stubs" }
-     # os-page         = { path = "os-emulation/crates/page/os-page" }
-     # os-page-codegen = { path = "os-emulation/crates/page/os-page-codegen" }
+     os-target-core  = { path = "os-emulation/crates/target/os-target-core" }
+     os-build        = { path = "os-emulation/crates/build/os-build" }
+     os-abi-spec     = { path = "os-emulation/crates/abi/os-abi-spec" }
+     os-abi-stubs    = { path = "os-emulation/crates/abi/os-abi-stubs" }
+     os-abi-codegen  = { path = "os-emulation/crates/abi/os-abi-codegen" }
+     os-page         = { path = "os-emulation/crates/page/os-page" }
+     os-page-codegen = { path = "os-emulation/crates/page/os-page-codegen" }
+     os-syscall-emit = { path = "os-emulation/crates/emit/os-syscall-emit" }
+     os-linux-wasi   = { path = "os-emulation/crates/emit/os-linux-wasi" }
+     # os-async        = { path = "os-emulation/crates/runtime/os-async" }  # Phase 3
+     # os-redirect-stubs = { path = "os-emulation/crates/abi/os-redirect-stubs" }  # Future expansion
      ```
 
-   - From `@speet`, reference the new crates by their `https://github.com/portal-co/os-emulation.git` URLs in `Cargo.toml`; Cargo will silently substitute the local patch paths.
-   - All commits made during implementation should start with `[AI]` (e.g., `[AI] create os-ctx crate`, `[AI] migrate osctx to os-emulation`).
+   - From `@speet`, reference the new crates via path or `https://github.com/portal-co/os-emulation.git`; Cargo resolves them through the local `[patch]` entries.
+   - All implementation commits start with `[AI]`.
 
 1. **Create the repo** under `/Users/g/Code-local/portal-hot/os-emulation` as a new Git repo, seed it with a top-level `README.md` referencing this plan, and make the first commit `[AI] initialize os-emulation repo`.
 2. **Open a tracking issue** in `@speet` titled "Migrate OS crates to os-emulation" and reference this plan.
