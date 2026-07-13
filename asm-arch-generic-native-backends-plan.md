@@ -200,9 +200,23 @@ For `Load`/`Store` tests, the harness reserves a heap page and pre-fills it
 with test data; the generated helper calls are replaced by tiny in-image stubs
 that read from / write to that page and return.
 
+## 7. Implementation status
+
+**Phase 0 (x86-64 refactor), Phase 1 (AArch64), and Phase 2 (RISC-V 64) are complete.**
+- `X86_64SysVBackend<W, L>` is generic over `asm-x86-64` writers, with `new_binary()`
+  producing `IcedWriter<Label>` bytes and `new_text()` keeping an optional text path.
+- `AArch64SysVBackend<W, L>` is implemented using `asm-aarch64`'s `AArch64Writer` binary encoder.
+- `Riscv64Backend<W, L>` is implemented using `asm-riscv64`'s `RvAsmWriter` binary encoder.
+- All three implement `os_target_core::NativeBackend`.
+- `os-target-core` now defines the `NativeBackend` subtrait.
+- Shared `tests/harness.rs` runs generated x86-64, AArch64, and RISC-V 64 bytes under
+  `unicorn-engine`.
+- `cargo test -p os-target-native` passes 22 tests (12 library/module tests + 10 integration
+  unicorn tests) and `cargo test --all` is green.
+
 ## 7. Phases
 
-### Phase 0 — Refactor x86-64 backend to be writer-generic and binary-first (1 week)
+### Phase 0 — Refactor x86-64 backend to be writer-generic and binary-first (1 week) ✅ DONE
 
 1. Replace `out: String` in `X86_64SysVBackend` with a generic `W: X64WriterCore + X64Writer<L, ()>`.
 2. Add a binary-writer constructor (`new_binary`) that uses `asm-x86-64`'s
@@ -212,7 +226,7 @@ that read from / write to that page and return.
 4. Add a tiny reusable `unicorn` harness in `os-target-native/tests/harness.rs`
    (memory mapping, stack setup, run, register / memory assertion).
 
-### Phase 1 — Introduce AArch64 backend (1 week)
+### Phase 1 — Introduce AArch64 backend (1 week) ✅ DONE
 
 1. Add `asm-aarch64` as a dependency of `os-target-native`.
 2. Define `AArch64SysVConfig` and `AArch64SysVBackend<W>`.
@@ -221,7 +235,7 @@ that read from / write to that page and return.
 4. Add `unicorn-engine` execution tests for push/pop/load/store/ecall/jump/trap
    using the shared harness.
 
-### Phase 2 — Introduce RISC-V 64 backend (1 week)
+### Phase 2 — Introduce RISC-V 64 backend (1 week) ✅ DONE
 
 1. Add `asm-riscv64` as a dependency of `os-target-native`.
 2. Define `Riscv64Config` and `Riscv64Backend<W>`.
@@ -231,10 +245,13 @@ that read from / write to that page and return.
 
 ### Phase 3 — Hook up to `NativeBackend` subtrait and object model (1 week)
 
-1. Implement `NativeBackend` for all three backends.
-2. Update the object-model native renderer to use `NativeBackend` instead of
+1. ✅ Implement `NativeBackend` for all three backends.
+2. Add arch-specific `Load`/`Store` helper stubs in unicorn tests so the
+   `Load` and `Store` OsOp paths can be executed end-to-end on all three
+   architectures.
+3. Update the object-model native renderer to use `NativeBackend` instead of
    reaching for arch-specific types.
-3. Add an `os-target-native` test that renders a simple object-model operation
+4. Add an `os-target-native` test that renders a simple object-model operation
    on each of the three architectures.
 
 ## 8. Crate changes
@@ -277,11 +294,14 @@ genericity that is already there.
 
 ## 11. Immediate next steps
 
-1. Read `asm-aarch64/src/out.rs` and `asm-riscv64/src/out.rs` to capture exact
-   `WriterCore` / `Writer` signatures and label types.
-2. Refactor `X86_64SysVBackend` to generic `W` and switch existing tests to
+1. ✅ Refactor `X86_64SysVBackend` to generic `W` and switch existing tests to
    binary output + `unicorn-engine`.
-3. Add the shared unicorn harness to `os-target-native/tests/harness.rs`.
-4. Open a tracking issue in `portal-co/os-emulation` for native backend
+2. ✅ Add the shared unicorn harness to `os-target-native/tests/harness.rs`.
+3. ✅ Implement AArch64 and RISC-V 64 generic binary backends.
+4. Add in-image `Load`/`Store` helper stubs for the unicorn harness so those
+   OsOp paths can be executed end-to-end on all three architectures.
+5. Wire the object-model native renderer to `NativeBackend` so it can emit
+   JVM/DEX/.NET/WASMGC-style operations on x86-64, AArch64, and RISC-V 64.
+6. Open a tracking issue in `portal-co/os-emulation` for native backend
    architecture expansion.
-5. Commit with prefix `[AI]` at each phase checkpoint.
+7. Commit with prefix `[AI]` at each phase checkpoint.
