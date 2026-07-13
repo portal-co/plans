@@ -747,30 +747,29 @@ External foundational dependencies (not duplicated inside `os-emulation`)
 ├── wax-core                 ← single source of truth in `portal-co/wax`; consumed by `os-linux-wasi`, `os-page-codegen`, `os-abi-codegen`, and `@speet` native backends
 
 os-emulation
-├── core
+├── runtime
 │   ├── os-ctx               ← no_std / std / WASM
-│   ├── os-host-api          ← depends on os-ctx
-│   ├── os-syscall-table     ← depends on os-ctx (shared data model)
-│   ├── os-syscall-emit      ← depends on os-ctx, os-syscall-table (compile-time)
-│   ├── os-page              ← no_std / std / WASM runtime traits
-│   └── os-page-codegen      ← depends on os-page (compile-time emitters)
+│   └── os-host-api          ← depends on os-ctx
 ├── target
-│   └── os-target-core       ← no_std shared operation IR + Backend trait (with WaxBackend<T> adapter for wax-core sinks)
+│   └── os-target-core       ← no_std shared operation IR + Backend trait (WaxBackend<T> for wax-core sinks is scaffolding)
 ├── abi
 │   ├── os-abi-spec
 │   ├── os-abi-codegen       ← depends on os-abi-spec, os-build, os-target-core
 │   └── os-abi-stubs
 ├── build
-│   └── os-build             ← BuildGlue<B> trait, generic over os-target-core::Backend; trait contract for compiler/builder glue
-├── backends
-│   ├── os-linux-wasi        ← depends on os-syscall-emit, os-target-core, os-build
-│   └── os-vkernel           ← depends on os-ctx, os-manifest, os-page (std) — future work
-└── runtime
+│   └── os-build             ← BuildGlue<B> trait, generic over os-target-core::Backend; depends on os-page, os-syscall-emit
+├── page
+│   ├── os-page              ← no_std shared `MemorySpec`, runtime `GuestMemory` + `PageTable`, `GuestFault`
+│   └── os-page-codegen      ← depends on os-page, os-target-core, os-build (scaffolding emitters)
+├── emit
+│   ├── os-syscall-emit      ← generic `SyscallTable`/`SyscallEntry` data model (no_std + alloc)
+│   └── os-linux-wasi        ← depends on os-syscall-emit
+└── runtime (future)
     ├── os-manifest          — future work
-    ├── os-runtime
-    ├── os-async             ← async OS / Ctx / HostApi surface; depends on os-ctx
+    ├── os-async             ← async OS / Ctx / HostApi surface; depends on os-ctx — Phase 3
     ├── os-plugin            — future work
     └── osctx-ptrace         ← depends on os-ctx — future work
+    └── os-vkernel           ← depends on os-ctx, os-manifest, os-page (std) — future work
 
 @speet (after migration)
 ├── helper/*                 (stays)
@@ -814,10 +813,10 @@ os-emulation
 | Test category | Location |
 |---|---|
 | Unit tests for `OS`, `Ctx`, `GuestMemory` traits with mock impls | `crates/core/os-ctx/tests/` |
-| Syscall table invariants (sortedness, param count match) | `crates/core/os-syscall-emit/tests/` |
-| WASI import registration and ABI mapping | `crates/backends/os-linux-wasi/tests/` |
-| Page-table invariants (legacy, shared, both modes) | `crates/core/os-page/tests/` |
-| Memory codegen parity: same `MemorySpec` produces equivalent JS and WASM helpers | `crates/core/os-page-codegen/tests/` |
+| Syscall table invariants (sortedness, param count match) | `crates/emit/os-syscall-emit/tests/` |
+| WASI import registration and ABI mapping | `crates/emit/os-linux-wasi/tests/` |
+| Page-table invariants (legacy, shared, both modes) | `crates/page/os-page/tests/` |
+| Memory codegen parity: same `MemorySpec` produces equivalent JS and WASM helpers | `crates/page/os-page-codegen/tests/` |
 | Syscall codegen invariants (sortedness, param count match) | `crates/core/os-syscall-emit/tests/` |
 | BuildGlue<B> mock implementation, including jump-to-address and state-layout answers for a test backend | `crates/build/os-build/tests/` |
 | `os-target-core` roundtrips: render `OsOp` through every supported `Backend` (WaxBackend<MockSink>, JS, StackOp) | `crates/target/os-target-core/tests/` |
