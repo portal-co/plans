@@ -28,7 +28,7 @@ Speet and giving Jade a portable managed heap.
 
 | Consumer | Current object/memory surface | What the port enables |
 |---|---|---|
-| `@speet` / DEX | `speet-object::ObjectModel` wired to `NoObjectModel` | A real `LinearMemoryObjects` renderer, reusable by all Speet managed runtimes. |
+| `@speet` / DEX | `speet-object::ObjectModel` wired to `NoObjectModel` | A real `LinearMemoryRenderer`, reusable by all Speet managed runtimes. |
 | `@jade` JS JIT | Emits JS source that leans entirely on the host JS engine for objects/arrays | A second bytecode backend that emits portable object-model operations backed by an explicit heap (still JS source initially, then WASM/native). |
 | `portal-co/wasm-blitz` (future) | N/A | Native renderers for the object model after the wasm-blitz refactor stabilizes. |
 | `@jsaw` | N/A (deferred) | Use the same object model for SWC/JS transpilation once core crates mature. |
@@ -79,32 +79,54 @@ ObjectModelFlavor
 - `ClassLayout` — maps field names / slot indices to byte offsets and
   `FieldValType`s for a given `ObjectModelFlavor`.
 
-#### `ObjectModel` trait
+#### Unified `ObjectRenderer` trait
 
-Replace the current `ObjectModel<C, E>` trait with a smaller, backend-agnostic
-description trait plus per-operation renderers:
+The current `ObjectModel<C, E>` trait is replaced by a single, monolithic
+`ObjectRenderer<B: Backend>` trait that contains the methods of **all** source
+object models: JVM/DEX, ECMAScript, .NET, and WASMGC. Each concrete renderer
+targets one concrete layout / heap representation (linear memory, WASMGC,
+JS heap, etc.) and implements every method by either using a native target
+operation or by emulating the source-model semantics on top of its own layout.
+
+Because all the source models are GC/managed, emulation is feasible but
+nontrivial: a linear-memory renderer, for example, can implement ECMAScript
+property access on top of its own object headers and a property map, while a
+WASMGC renderer can allocate a JVM-like object by building a WASMGC struct with
+extra slots for the class hash and monitor.
 
 ```rust
-pub trait ObjectModel: Sized {
-    fn flavor(&self) -> ObjectModelFlavor;
-    fn layout(&self) -> &Layout;
-    fn class_layout(&self, hash: &TypeHash) -> Option<&ClassLayout>;
-}
-```
+pub trait ObjectRenderer<B: Backend> {
+    // JVM / DEX
+    fn emit_jvm_new(&mut self, backend: &mut B, class_hash: &TypeHash);
+    fn emit_jvm_iget(&mut self, backend: &mut B, class_hash: &TypeHash, field: &str);
+    fn emit_jvm_iput(&mut self, backend: &mut B, class_hash: &TypeHash, field: &str);
+    fn emit_jvm_new_array(&mut self, backend: &mut B, elem: FieldValType);
+    fn emit_jvm_aget(&mut self, backend: &mut B, elem: FieldValType);
+    fn emit_jvm_aput(&mut self, backend: &mut B, elem: FieldValType);
+    fn emit_jvm_array_length(&mut self, backend: &mut B);
+    fn emit_jvm_instanceof(&mut self, backend: &mut B, class_hash: &TypeHash);
+    fn emit_jvm_check_cast(&mut self, backend: &mut B, class_hash: &TypeHash);
 
-The actual code emission moves to:
+    // ECMAScript
+    fn emit_ecma_new_object(&mut self, backend: &mut B, n_pairs: u32);
+    fn emit_ecma_get_property(&mut self, backend: &mut B);
+    fn emit_ecma_set_property(&mut self, backend: &mut B);
+    fn emit_ecma_new_array(&mut self, backend: &mut B);
 
-```rust
-pub trait ObjectRenderer<B: Backend>: ObjectModel {
-    fn render_new_object(&mut self, backend: &mut B, hash: &TypeHash) -> Result<(), ()>;
-    fn render_new_array(&mut self, backend: &mut B, elem_ty: &FieldValType, len: u32);
-    fn render_iget(&mut self, backend: &mut B, hash: &TypeHash, field: &str, ty: FieldValType);
-    fn render_iput(&mut self, backend: &mut B, hash: &TypeHash, field: &str, ty: FieldValType);
-    fn render_aget(&mut self, backend: &mut B, elem_ty: FieldValType);
-    fn render_aput(&mut self, backend: &mut B, elem_ty: FieldValType);
-    fn render_array_length(&mut self, backend: &mut B);
-    fn render_instanceof(&mut self, backend: &mut B, hash: &TypeHash);
-    fn render_check_cast(&mut self, backend: &mut B, hash: &TypeHash);
+    // .NET
+    fn emit_dotnet_new_object(&mut self, backend: &mut B, mt_hash: &TypeHash);
+    fn emit_dotnet_ldelem(&mut self, backend: &mut B, elem: FieldValType);
+    fn emit_dotnet_stelem(&mut self, backend: &mut B, elem: FieldValType);
+
+    // WASMGC
+    fn emit_wasmgc_struct_new(&mut self, backend: &mut B, type_hash: &TypeHash);
+    fn emit_wasmgc_struct_get(&mut self, backend: &mut B, type_hash: &TypeHash, field: u32);
+    fn emit_wasmgc_struct_set(&mut self, backend: &mut B, type_hash: &TypeHash, field: u32);
+    fn emit_wasmgc_array_new(&mut self, backend: &mut B, type_hash: &TypeHash);
+    fn emit_wasmgc_array_get(&mut self, backend: &mut B, type_hash: &TypeHash);
+    fn emit_wasmgc_array_set(&mut self, backend: &mut B, type_hash: &TypeHash);
+    fn emit_wasmgc_ref_test(&mut self, backend: &mut B, type_hash: &TypeHash);
+    fn emit_wasmgc_ref_cast(&mut self, backend: &mut B, type_hash: &TypeHash);
 }
 ```
 
@@ -124,11 +146,9 @@ Each renderer is a module or subcrate under `os-object-model`:
 - `wasm_linear` — equivalent to today's `LinearMemoryObjects`.
   - Target: `WaxBackend<InstructionSink>` or `InstructionSinkBackend`.
   - Runtime imports: `alloc_object`, `alloc_array`, `throw_class_cast`.
-- `wasm_gc` — future renderer for WASMGC `structref`/`arrayref`.
-- `jade_js` — emits JS source that manipulates an explicit typed-array heap
-  (see §6).
-- `ecma_shape` — describes ECMAScript hidden-class / property-map layouts
-  (initially analysis-only, later a JS renderer).
+- `wasm_gc` — full WASMGC renderer (native for its own operations, emulates JVM/ECMAScript/.NET where needed).
+- `jade_js` — JS-source renderer backed by an explicit typed-array heap (native for ECMAScript objects/arrays, emulates JVM/.NET/WASMGC on top).
+- `ecma_shape` — shared ECMAScript hidden-class / property-map helpers for shape analysis.
 
 ### 4.3 Runtime helper contract
 
@@ -149,11 +169,11 @@ JS shim that does not require the full JS engine.
 ## 5. Speet integration
 
 1. Move `speet-object` source into `os-emulation/crates/object/os-object-model`.
-2. Introduce the `ObjectModelFlavor` / `Layout` / renderer split while keeping
-   the existing linear-memory semantics intact.
+2. Introduce the `ObjectModelFlavor` / `Layout` / unified renderer split while
+   keeping the existing linear-memory semantics intact.
 3. Turn `speet/crates/managed/speet-object` into a shim.
-4. Switch `speet-dex` to default to `LinearMemoryObjects<WasmLinearRenderer>`
-   behind a feature flag instead of `NoObjectModel`.
+4. Switch `speet-dex` to default to a real `WasmLinearRenderer` behind a feature
+   flag instead of `NoObjectModel`.
 5. Keep `NoObjectModel` available for DEX files that are statically known not
    to use managed objects.
 
@@ -181,11 +201,11 @@ Jade bytecode ops to lower through the object model:
 
 | Jade op | Object-model operation(s) |
 |---|---|
-| `Arr(items, dest)` | `render_new_array` with element type `AnyRef`/`Ref`, then `render_aput` per item. |
-| `Str(items, dest)` | Same array shape, target a `StringRef` element type or runtime string interner. |
-| `Litobj { pairs, key, ... }` | `render_new_object` for the shape, then `render_iput` per pair. |
-| `Get { obj, key, dest }` | Dynamic property lookup. For numeric keys on arrays: `render_aget`. For string keys on objects: shape-keyed `render_iget` guarded by a runtime shape check, or a generic property-map helper for the ECMAScript flavor. |
-| `Set { obj, key, val, dest }` | Corresponding write path. |
+| `Arr(items, dest)` | `emit_ecma_new_array`, then `emit_ecma_get_property`/`emit_jvm_aget`-style store per item (renderer chooses). |
+| `Str(items, dest)` | `emit_ecma_new_array` with `StringRef` items, or a runtime string constructor if the renderer specializes strings. |
+| `Litobj { pairs, key, ... }` | `emit_ecma_new_object(n_pairs)`, then `emit_ecma_set_property` per pair. |
+| `Get { obj, key, dest }` | `emit_ecma_get_property`; the renderer turns this into a native target operation (linear-memory property-map lookup, WASMGC struct get, or real JS property access). |
+| `Set { obj, key, val, dest }` | `emit_ecma_set_property`; renderer lowers to the target store. |
 
 ### 6.3 Crate changes
 
@@ -210,7 +230,9 @@ Implementation strategy:
 
 1. **Phase A (JS source)** — render through `jade_js::JsObjectRenderer`, still
    producing a JS program, but one that only relies on typed arrays and the
-   `jadeOs` helper set, not on host `Object`/`Array`.
+   `jadeOs` helper set, not on host `Object`/`Array`. The renderer is native for
+   ECMAScript operations and emulates JVM/DEX/.NET/WASMGC methods when future
+   consumers use them.
 2. **Phase B (WASM)** — render through `wasm_linear::WasmLinearRenderer`,
    producing a WASM module. Jade can then run as a pure WASM guest.
 3. **Phase C (native)** — deferred until `wasm-blitz` direct native is ready.
@@ -257,7 +279,7 @@ os-emulation
 
 @speet
 ├── crates/managed/speet-object   → compatibility shim re-exporting os-object-model
-├── crates/managed/speet-dex      → uses LinearMemoryObjects renderer
+├── crates/managed/speet-dex      → uses LinearMemoryRenderer
 ├── crates/plugin/speet-plugin-api → PluginTypeHash/PluginFieldValType become aliases to os-object-model types
 └── crates/plugin/speet-plugin-adapter → converts to os-object-model renderers
 
@@ -277,13 +299,13 @@ os-emulation
 |---|---|
 | TypeHash roundrips and primitive sentinels | `crates/object/os-object-model/tests/hash.rs` |
 | Layout invariants across flavors | `crates/object/os-object-model/tests/layout.rs` |
-| `LinearMemory` renderer output matches old `speet-object` unit tests | `crates/object/os-object-model/tests/wasm_linear.rs` |
-| `JadeJs` renderer emits correct `jadeOs.newArray` / `jadeOs.setProp` calls | `crates/object/os-object-model/tests/jade_js.rs` |
+| `LinearMemory` renderer output matches old `speet-object` unit tests and correctly emulates ECMAScript/WASMGC/.NET operations | `crates/object/os-object-model/tests/wasm_linear.rs` |
+| `JadeJs` renderer emits correct `jadeOs.newArray` / `jadeOs.setProp` calls and exercises JVM/DEX/WASMGC emulation paths | `crates/object/os-object-model/tests/jade_js.rs` |
 | Render to `Vec<OsOp>` and to `Vec<StackOp>` via existing backends | `crates/object/os-object-model/tests/cross_backend.rs` |
 
 ### 9.2 Tests in `@speet`
 
-- `cargo test -p speet-dex` with `LinearMemoryObjects` enabled for a small
+- `cargo test -p speet-dex` with `LinearMemoryRenderer` enabled for a small
   object-allocating DEX fixture.
 - Recompile E2E corpus unchanged to ensure the shim does not break anything.
 
