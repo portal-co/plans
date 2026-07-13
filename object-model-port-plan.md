@@ -139,6 +139,22 @@ If a consumer still wants to emit directly into `InstructionSink`, a small
 translating `OsOp` into `wasm_encoder::Instruction`s (the semantics already
 exist in `os-target-wax`).
 
+#### Backend capability subtraits
+
+The baseline `os-target_core::Backend` only accepts `OsOp`. Higher-level
+renderers need to know whether the backend supports WASM locals, JS string
+literals, or native registers. See `plans/backend-capability-subtraits-plan.md`
+for the full design. The object-model renderers implement the unified
+`ObjectRenderer<B: Backend>` trait for concrete `B` that implement the relevant
+subtrait:
+
+```rust
+impl<B: WasmBackend> ObjectRenderer<B> for WasmLinearRenderer { ... }
+impl<B: JsBackend> ObjectRenderer<B> for JadeJsRenderer { ... }
+impl<B: WasmGcBackend> ObjectRenderer<B> for WasmGcRenderer { ... }
+impl<B: NativeBackend> ObjectRenderer<B> for NativeObjectRenderer { ... }
+```
+
 ### 4.2 Provided renderers
 
 Each renderer is a module or subcrate under `os-object-model`:
@@ -333,11 +349,12 @@ os-emulation
 
 1. Introduce `ObjectModelFlavor`, `Layout`, and `ClassLayout`.
 2. Split `ObjectModel` into description + `ObjectRenderer<B: Backend>`.
-3. Port `LinearMemoryObjects` to `LinearMemoryRenderer` that emits `OsOp`
-   (default for WASM backends).
-4. Keep an `InstructionSinkBackend` adapter so Speet can continue to use the old
+3. Add `WasmBackend`, `JsBackend`, `NativeBackend`, `WasmGcBackend` capability
+   subtraits to `os-target-core` (see `backend-capability-subtraits-plan.md`).
+4. Port `LinearMemoryObjects` to `LinearMemoryRenderer<B: WasmBackend>`.
+5. Keep an `InstructionSinkBackend` adapter so Speet can continue to use the old
    `wax_core::InstructionSink` path without rewriting callers.
-5. Rename `FieldValType` / add `AnyRef` / `StringRef` / `FunctionRef`.
+6. Rename `FieldValType` / add `AnyRef` / `StringRef` / `FunctionRef`.
 
 ### Phase 2 — Renderers (2 weeks)
 
