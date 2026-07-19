@@ -1,6 +1,6 @@
 # Vane AArch64 support with `disarm64` parity
 
-**Status:** In progress — Phases 0–3 complete; Phase 4 has an initial shared scalar-FP substrate and Phase 5 has an explicit native embedding. Full parity remains open.
+**Status:** In progress — Phases 0–3 complete; Phase 4 scalar-FP lowering and Phase 5 native/JS embedding hardening are implemented for the documented subset. Full Speet parity remains open.
 **Owners:** `@vane` (implementation), `@speet` (reference coverage)
 **Reference snapshot:** `@speet` commit `073c872` (`speet-aarch64`)
 **Decoder:** [`disarm64`](https://crates.io/crates/disarm64), resolved to `0.1.26` in the reference workspace
@@ -37,11 +37,17 @@ The first implementation slice is now present in `@vane`:
 - `Aarch64Reactor` is an explicit native embedding that runs an A64 trace
   against a caller-supplied `StackHost`, leaving the existing RV64
   WASM-bindgen `Reactor` ABI unchanged.
+- The remaining scalar-FP ledger classes now lower for supported S/D raw-word
+  forms: non-fused-policy `FLOATDP3`, `FLOATIMM`, `FLOATSEL`, `FLOATCMP`,
+  FP-register/GP bit moves, `SCVTF`/`UCVTF`, and `FCVTZS`/`FCVTZU`. The
+  native execution suite exercises those paths, and a Node syntax check
+  validates generated `CoreJS` output containing the complete FP sequence.
 
 The remaining decoder families listed below are still deliberately trapped.
 In particular, flag-setting logical operations, extended-register ADD/SUB,
-bitfield and multiply/divide instructions, A64 FLOATDP3/FLOATIMM/FLOATSEL/
-FLOATCMP/FLOAT2INT, and browser corpus coverage must land before parity may be
+bitfield and multiply/divide instructions, the non-Speet rounding-mode FP
+variants, scalar FP memory, a browser-runtime execution corpus, and the
+checked table-driven all-width parity audit must land before parity may be
 claimed.
 
 ## 1. Goal
