@@ -21,12 +21,15 @@ The first implementation slice is now present in `@vane`:
   state layout.
 - `a64_emit` implements fixed-width fetch and little-endian `CheckCode`, the
   cached label/tail-call trace lifecycle, `MOVZ`/`MOVN`/`MOVK`, ADD/SUB
-  immediate and shifted-register forms (including NZCV production), shifted
-  logical AND/BIC/ORR/ORN/EOR/EON, ADR/ADRP, `B`/`BL`/`BR`/`BLR`/`RET`, all
-  `B.cond` predicates, `CBZ`/`CBNZ`, and all six integer memory classes:
-  unsigned-offset, unscaled, signed imm9 pre/post-index, register-offset,
-  signed-offset pair, and indexed pair forms. The native suite includes raw
-  address/writeback/pair-order execution coverage.
+  immediate, shifted-register, and extended-register forms (including NZCV
+  production), logical shifted and logical-immediate forms (including ANDS
+  flag production), `UBFM`/`SBFM`/`BFM`, `UDIV`/`SDIV`/variable shifts/`RORV`,
+  MADD/MSUB and long multiply-add/subtract plus `SMULH`/`UMULH`, ADR/ADRP, `BRK`,
+  `B`/`BL`/`BR`/`BLR`/`RET`, all `B.cond` predicates, `CBZ`/`CBNZ`, and all six
+  integer memory classes: unsigned-offset, unscaled, signed imm9 pre/post-
+  index, register-offset, signed-offset pair, and indexed pair forms. The
+  native suite includes raw address/writeback/pair-order and integer-ALU
+  execution coverage.
 
 - Scalar FP infrastructure is now shared by A64 and RV64: raw-bit F32/F64
   `StackOp` operations execute in both the native interpreter and JS JIT,
@@ -44,11 +47,9 @@ The first implementation slice is now present in `@vane`:
   validates generated `CoreJS` output containing the complete FP sequence.
 
 The remaining decoder families listed below are still deliberately trapped.
-In particular, flag-setting logical operations, extended-register ADD/SUB,
-bitfield and multiply/divide instructions, the non-Speet rounding-mode FP
-variants, scalar FP memory, a browser-runtime execution corpus, and the
-checked table-driven all-width parity audit must land before parity may be
-claimed.
+In particular, scalar FP rounding-mode variants and memory, a browser-runtime
+execution corpus, and the checked table-driven all-width parity audit must land
+before parity may be claimed.
 
 ## 1. Goal
 
