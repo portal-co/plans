@@ -1,6 +1,6 @@
 # Vane AArch64 support with `disarm64` parity
 
-**Status:** In progress — Phases 0–3 implemented; Phase 4 (scalar FP) remains.
+**Status:** In progress — Phases 0–3 complete; Phase 4 has an initial shared scalar-FP substrate and Phase 5 has an explicit native embedding. Full parity remains open.
 **Owners:** `@vane` (implementation), `@speet` (reference coverage)
 **Reference snapshot:** `@speet` commit `073c872` (`speet-aarch64`)
 **Decoder:** [`disarm64`](https://crates.io/crates/disarm64), resolved to `0.1.26` in the reference workspace
@@ -28,10 +28,21 @@ The first implementation slice is now present in `@vane`:
   signed-offset pair, and indexed pair forms. The native suite includes raw
   address/writeback/pair-order execution coverage.
 
+- Scalar FP infrastructure is now shared by A64 and RV64: raw-bit F32/F64
+  `StackOp` operations execute in both the native interpreter and JS JIT,
+  with F32 rounded at each operation. AArch64 has initial `FLOATDP1`/`FLOATDP2`
+  lowering (arithmetic, min/max, FNMUL, abs/neg/sqrt, and FP-register FMOV),
+  and RV64 now lowers scalar loads/stores plus `FADD`/`FSUB`/`FMUL`/`FDIV` and
+  `FSQRT` for S/D through the same slots.
+- `Aarch64Reactor` is an explicit native embedding that runs an A64 trace
+  against a caller-supplied `StackHost`, leaving the existing RV64
+  WASM-bindgen `Reactor` ABI unchanged.
+
 The remaining decoder families listed below are still deliberately trapped.
 In particular, flag-setting logical operations, extended-register ADD/SUB,
-bitfield and multiply/divide instructions, and scalar floating point must land
-before parity may be claimed.
+bitfield and multiply/divide instructions, A64 FLOATDP3/FLOATIMM/FLOATSEL/
+FLOATCMP/FLOAT2INT, and browser corpus coverage must land before parity may be
+claimed.
 
 ## 1. Goal
 
