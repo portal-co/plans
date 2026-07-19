@@ -1,6 +1,6 @@
 # Vane AArch64 support with `disarm64` parity
 
-**Status:** In progress — Phases 0–1 implemented; Phase 2 has begun but parity remains incomplete.
+**Status:** In progress — Phases 0–3 implemented; Phase 4 (scalar FP) remains.
 **Owners:** `@vane` (implementation), `@speet` (reference coverage)
 **Reference snapshot:** `@speet` commit `073c872` (`speet-aarch64`)
 **Decoder:** [`disarm64`](https://crates.io/crates/disarm64), resolved to `0.1.26` in the reference workspace
@@ -23,13 +23,15 @@ The first implementation slice is now present in `@vane`:
   cached label/tail-call trace lifecycle, `MOVZ`/`MOVN`/`MOVK`, ADD/SUB
   immediate and shifted-register forms (including NZCV production), shifted
   logical AND/BIC/ORR/ORN/EOR/EON, ADR/ADRP, `B`/`BL`/`BR`/`BLR`/`RET`, all
-  `B.cond` predicates, `CBZ`/`CBNZ`, and unsigned-offset scalar integer
-  `LDR`/`STR`/`LDRB`/`STRB`/`LDRH`/`STRH`/`LDRSW`.
+  `B.cond` predicates, `CBZ`/`CBNZ`, and all six integer memory classes:
+  unsigned-offset, unscaled, signed imm9 pre/post-index, register-offset,
+  signed-offset pair, and indexed pair forms. The native suite includes raw
+  address/writeback/pair-order execution coverage.
 
 The remaining decoder families listed below are still deliberately trapped.
 In particular, flag-setting logical operations, extended-register ADD/SUB,
-bitfield and multiply/divide instructions, pre/post-index and pair memory
-forms, and scalar floating point must land before parity may be claimed.
+bitfield and multiply/divide instructions, and scalar floating point must land
+before parity may be claimed.
 
 ## 1. Goal
 
