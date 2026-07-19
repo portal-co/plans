@@ -1,6 +1,6 @@
 # Vane AArch64 support with `disarm64` parity
 
-**Status:** In progress — Phases 0–3 complete; Phase 4 scalar-FP lowering and Phase 5 native/JS embedding hardening are implemented for the documented subset. Full Speet parity remains open.
+**Status:** In progress — Phases 0–4 are implemented; Phase 5 now has explicit native embedding and a checked-in browser micro-corpus smoke test. Full Speet parity remains open.
 **Owners:** `@vane` (implementation), `@speet` (reference coverage)
 **Reference snapshot:** `@speet` commit `073c872` (`speet-aarch64`)
 **Decoder:** [`disarm64`](https://crates.io/crates/disarm64), resolved to `0.1.26` in the reference workspace
@@ -39,7 +39,10 @@ The first implementation slice is now present in `@vane`:
   `FSQRT` for S/D through the same slots.
 - `Aarch64Reactor` is an explicit native embedding that runs an A64 trace
   against a caller-supplied `StackHost`, leaving the existing RV64
-  WASM-bindgen `Reactor` ABI unchanged.
+  WASM-bindgen `Reactor` ABI unchanged. `aarch64_browser_tests.rs` provides a
+  Vane-owned raw-word browser micro-corpus smoke test, which compiles the
+  A64 trace through `CoreJS`, evaluates it in headless Chrome, and observes
+  the configured A64 state object without using the RV64 reactor.
 - The remaining scalar-FP ledger classes now lower for supported S/D raw-word
   forms: non-fused-policy `FLOATDP3`, `FLOATIMM`, `FLOATSEL`, `FLOATCMP`,
   FP-register/GP bit moves, `SCVTF`/`UCVTF`, and `FCVTZS`/`FCVTZU`. The
@@ -47,9 +50,10 @@ The first implementation slice is now present in `@vane`:
   validates generated `CoreJS` output containing the complete FP sequence.
 
 The remaining decoder families listed below are still deliberately trapped.
-In particular, scalar FP rounding-mode variants and memory, a browser-runtime
-execution corpus, and the checked table-driven all-width parity audit must land
-before parity may be claimed.
+In particular, scalar FP rounding-mode variants and memory, a broader
+multi-family browser corpus (the current browser fixture is a raw-word
+execution smoke test), and the checked table-driven all-width parity audit
+must land before parity may be claimed.
 
 ## 1. Goal
 
@@ -501,7 +505,7 @@ RUSTC_BOOTSTRAP=1 cargo test -p vane-aarch64
 # Existing Vane regressions, including the shared renderer/interpreter.
 RUSTC_BOOTSTRAP=1 cargo test -p vane-arch -p vane-riscv
 
-# Browser JS JIT execution coverage.
+# Browser CoreJS execution smoke test (Chrome plus chromedriver).
 wasm-pack test --headless --chrome crates/vane-aarch64
 ```
 
