@@ -15,6 +15,8 @@ This document is the canonical plan for extracting, genericizing, and centralizi
 
 `@speet` will become a **reference consumer** of this layer: its own OS crates will be thin re-exports or wrappers that point to the new repo. `@vane` will consume it first on its **currently supported surface** — the riscv64 interpreter and JS JIT — and only later expand to the aspirational surface (WASM JIT, user-facing API, additional architectures).
 
+> **Addendum (2026-07-17):** A new, additive `crates/daemon/` track imports and genericizes speet's on-the-fly transformation daemon (`speet-rtd` + `rtd_protocol` + `execve_hook`) into this repo, behind a backend-agnostic `os-transform-core::TransformBackend` trait, and adds a new "simple rewriter" backend (dylib/so load-command rewriting for macOS/BSD/libc-Linux, with macOS hardened-runtime codesigning). This is not a revision of the phase table below — it does not touch the vkernel/ptrace/`parachute` future phases — see `os-emulation/docs/integrations/speet.md`'s "Daemon and transform backends" section for the design.
+
 ---
 
 ## 1. Why now: pain points in the current layout
