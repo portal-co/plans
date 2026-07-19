@@ -20,17 +20,20 @@ The first implementation slice is now present in `@vane`:
   renderer intentionally traps for them until that backend has an explicit
   state layout.
 - `a64_emit` implements fixed-width fetch and little-endian `CheckCode`, the
-  cached label/tail-call trace lifecycle, `MOVZ`/`MOVN`/`MOVK`, non-flagging
-  ADD/SUB immediate and unshifted register forms, `B`/`BL`/`BR`/`BLR`/`RET`,
-  `CBZ`/`CBNZ`, `B.cond` for `EQ`/`NE`, and unsigned-offset scalar
-  integer `LDR`/`STR`/`LDRB`/`STRB`/`LDRH`/`STRH`/`LDRSW`.
+  cached label/tail-call trace lifecycle, `MOVZ`/`MOVN`/`MOVK`, ADD/SUB
+  immediate and shifted-register forms (including NZCV production), shifted
+  logical AND/BIC/ORR/ORN/EOR/EON, ADR/ADRP, `B`/`BL`/`BR`/`BLR`/`RET`, all
+  `B.cond` predicates, `CBZ`/`CBNZ`, and unsigned-offset scalar integer
+  `LDR`/`STR`/`LDRB`/`STRB`/`LDRH`/`STRH`/`LDRSW`.
 
 The remaining decoder families listed below are still deliberately trapped.
-In particular, NZCV production, the other condition codes, pre/post-index and
-pair memory forms, PC-relative address formation, and scalar floating point
-must land before parity may be claimed.
+In particular, flag-setting logical operations, extended-register ADD/SUB,
+bitfield and multiply/divide instructions, pre/post-index and pair memory
+forms, and scalar floating point must land before parity may be claimed.
 
 ## 1. Goal
+
+Add an AArch64 guest frontend to `@vane` that decodes A64 machine code with the
 same `disarm64` crate used by `@speet` and supports the same *currently
 implemented instruction families* as `speet-aarch64` at the reference snapshot.
 
