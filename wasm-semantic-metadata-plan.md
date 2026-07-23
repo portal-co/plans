@@ -16,7 +16,7 @@ which code/data image a consumer is expected to receive. Today those facts are e
 lost, recreated independently, or retained in process-local state. That makes memory
 lowering unnecessarily expensive in Volar and Dreamcomp, prevents a signer from binding
 semantic resource claims to a module, and leaves ordinary WASM passes unaware of useful
-validated facts.
+facts that can be validated when a caller requests binding verification.
 
 This plan defines a **WASM Semantic Metadata Map (WSMM)**. It is:
 
@@ -28,36 +28,36 @@ This plan defines a **WASM Semantic Metadata Map (WSMM)**. It is:
 - usable by Wax and Waffle as a pass input/output, rather than being a private convention of
   any one compiler.
 
-This is **not** a replacement WASM format, a general debug-info container, an authority to
-ignore WASM validation, or permission for an optimizer to assume a claim merely because an
-untrusted producer wrote it.
+This is **not** a replacement WASM format, a general debug-info container, or an authority to
+ignore WASM validation. Whether a consumer respects a well-formed manifest is its explicit
+mode/type choice; neither the manifest's location nor a signature implicitly makes that choice.
 
 ## 2. Design principles and invariants
 
 1. **Canonical bytes are the identity.** Equal semantic maps encode to exactly the same byte
    sequence. No host map iteration order, JSON formatting, pointer identity, or process-local
    IDs may influence the signed representation.
-2. **Code and data are bound, not asserted.** `hash.code`, `hash.data`, and
-   `hash.interface` are recomputed from the received WASM and compared before a signature or
-   trusted resource claim is accepted.
+2. **Hash binding is opt-in and required for signatures.** `hash.code`, `hash.data`, and
+   `hash.interface` are recomputed from the received WASM before a `wasmsign3` signature is
+   accepted. An unsigned manifest may omit them and is still a well-formed manifest.
 3. **Custom-section and Context forms are equivalent.** Both use the same WSMM payload bytes.
-   A Context-only map may be useful before encoding, but cannot become a portable signed claim
-   until those exact bytes are emitted or supplied as an explicitly identified sidecar.
+   A Context-only map is a first-class manifest input; it becomes a portable signed claim only
+   when those exact bytes are emitted or supplied as an explicitly identified sidecar.
 4. **Conflicts fail closed.** A matching custom section and Context map may be deduplicated. A
-   disagreement in canonical bytes, duplicate key, incompatible version, malformed value, or
-   mismatch with recomputed hashes is a diagnostic—not a precedence rule.
-5. **Facts have trust and provenance.** A parser may expose untrusted metadata for diagnostics;
-   memory reduction and semantic optimization require a policy-selected verified producer or a
-   local inference/validation result.
+   disagreement in canonical bytes, duplicate key, incompatible version, or malformed value is
+   a diagnostic—not a precedence rule. A requested hash-binding check also diagnoses mismatch.
+5. **Use mode, not provenance, controls semantics.** Metadata has no prescribed source and no
+   producer identity. Consumers use distinct `Ignore`, `RespectUnstable`, or
+   `RequireSignature` modes/types; only the chosen mode determines whether facts affect output.
 6. **Metadata invalidates on semantic change.** A pass that changes code, data, memory/table
    declarations, exports/imports, or a metadata-dependent semantic fact must recompute affected
-   hashes and either update the map or remove its stale signed target/signature.
+   hashes and either update the map or remove its stale signing target/signature.
 7. **No hidden whole-module work.** A consumer can read a bounded header and requested keys
-   without decoding all bodies. Hash verification is explicitly a full selected-section task;
-   it is not silently triggered by a metadata lookup.
-8. **WASM remains authoritative for execution.** Metadata may refine allocation, analysis, or
-   pass choice only after validation. It never makes out-of-range memory accesses valid or
-   removes required dynamic checks without a separately justified semantic proof.
+   without decoding all bodies. Hash binding is an explicit full selected-section task; it is not
+   silently triggered by a metadata lookup.
+8. **WASM remains authoritative for execution.** Metadata can refine allocation, analysis, or
+   pass choice in a consumer that selected a respecting mode. It never makes out-of-range memory
+   accesses valid or removes required dynamic checks without a separately justified proof.
 
 ## 3. Wire format: `portal.wasm.meta.v1`
 
@@ -123,16 +123,14 @@ preserving them through a round trip.
 | Key | Type | Meaning |
 |---|---|---|
 | `format.version` | `u64` | Must be `1`; included to make Context/section mismatches explicit. |
-| `producer.name`, `producer.version`, `producer.build_id` | string | Provenance only; never a trust decision by itself. |
-| `module.kind` | string | Controlled vocabulary: `generic`, `speet`, `moond`, `volar`, `dreamcomp`, or `synthetic`. |
-| `hash.algorithm` | string | V1 is exactly `sha3-256`. |
+| `hash.algorithm` | string | V1 is exactly `sha3-256`; required when any `hash.*` binding key is present. |
 | `hash.code` | digest | Domain-separated canonical hash of code bodies (§4). |
 | `hash.data` | digest | Domain-separated canonical hash of active/passive data (§4). |
 | `hash.interface` | digest | Hash of index-sensitive non-code/data module interface (§4). |
 | `hash.semantic` | digest | Hash of WSMM bytes with all `hash.*` and signing-location keys omitted. |
 | `memory.count` | `u64` | Number of memories, including imported memories. |
 | `memory/<n>/index` | `u64` | WASM memory index; `<n>` is decimal with no leading zero. |
-| `memory/<n>/initial_pages`, `memory/<n>/maximum_pages` | `u64` | Initial/maximum page counts; maximum is required when a producer makes a bounded-footprint claim. |
+| `memory/<n>/initial_pages`, `memory/<n>/maximum_pages` | `u64` | Initial/maximum page counts; maximum is required when the manifest makes a bounded-footprint claim. |
 | `memory/<n>/page_size_log2` | `u64` | Usually `16`; records custom page sizes where enabled. |
 | `memory/<n>/address_bits` | `u64` | `32` or `64`; must agree with memory64 declaration. |
 | `memory/<n>/shared`, `memory/<n>/imported`, `memory/<n>/growable` | bool | Declared memory behavior. `growable=false` is a semantic claim requiring validation. |
@@ -141,15 +139,18 @@ preserving them through a round trip.
 | `memory/<n>/dynamic_access` | string | `none`, `bounded`, or `unknown`; guards use of layout facts by memory optimizers. |
 | `data/<n>/memory`, `data/<n>/offset`, `data/<n>/length`, `data/<n>/hash` | scalars/digest | Canonical descriptor of each active segment; passive segments use `memory = null` and include an explicit mode key. |
 | `abi.name`, `abi.version`, `abi.entrypoints` | string/u64/list | ABI and exported entry-point contract. |
-| `semantics.deterministic`, `semantics.traps`, `semantics.indirect_targets` | bool/string/list | Optional, explicitly scoped facts used by passes. `indirect_targets` is a conservative set or `unknown`, never an underspecified hint. |
+| `semantics.deterministic`, `semantics.traps` | bool/string | Optional, explicitly scoped facts used by passes. |
+| `table/<n>/indirect_targets` | list or string `unknown` | Conservative indirect-call target set for WASM table index `<n>`; each table has an independent claim, never an underspecified module-wide hint. |
 | `semantic/<name>` | typed value | Registry-backed semantic extension. A consuming pass must name the exact keys it understands. |
 | `vendor/<dns-name>/<key>` | typed value | Forward-compatible opaque producer extension; cannot alter standard-key meaning. |
 
-The registry must define the exact grammar for range records, permissions, data modes, and
-semantic vocabularies before v1 ships. Range endpoints use checked `start + length`; zero-length,
+The hash keys are optional for an unsigned manifest. The `wasmsign3` signing profile requires
+all four `hash.*` values and rejects a target that does not match them. The registry must define
+the exact grammar for range records, permissions, data modes, and semantic vocabularies before
+v1 ships. Range endpoints use checked `start + length`; zero-length,
 overlapping, out-of-bounds, and noncanonical adjacent ranges are rejected. A memory claim never
-covers an imported memory unless the producer explicitly supplies the bound and policy allows
-it.
+covers an imported memory unless the manifest explicitly supplies the bound and the consuming
+mode permits using it.
 
 ## 4. Hashes and `wasmsign3` signing target
 
@@ -170,10 +171,13 @@ it cannot be confused by concatenation or import-function shifts. The data seque
 active/passive mode, memory index where applicable, canonical constant offset expression bytes,
 segment ordinal, payload length, and payload bytes. The interface sequence covers type/import/
 function-signature/memory/table/global/tag/element/export/start declarations and their
-index-sensitive ordering, but excludes custom sections, code bodies, and data payloads.
+index-sensitive ordering **including every table element segment**: its active/passive/declarative
+mode, table index, offset expression, element type, segment ordinal, and every function/reference
+initializer. It excludes custom sections, code bodies, and data payloads.
 
 This division makes code and data hashes independently useful while preventing a module from
-reusing a valid code hash with a changed ABI, table, memory limit, or segment placement.
+reusing a valid code hash with a changed ABI, table declaration or element initialization, memory
+limit, or segment placement.
 
 ### 4.2 Signing target
 
@@ -185,7 +189,7 @@ reusing a valid code hash with a changed ABI, table, memory limit, or segment pl
 ```
 
 `policy-id` identifies the verifier’s declared policy (for example `resource-layout/v1`), not a
-producer string. The signer context is bounded, explicit bytes for deployment-specific binding
+manifest-source string. The signer context is bounded, explicit bytes for deployment-specific binding
 such as network or release identity. It may not contain secret material or an unbounded raw
 module copy.
 
@@ -197,10 +201,12 @@ algorithm/key/signature material. A verifier must:
 2. recompute all three WASM hashes and `H_semantic`;
 3. compare them to WSMM and target-section fields;
 4. check the signature over the canonical target; and
-5. apply the caller’s policy to the verified key, policy-id, producer class, and requested keys.
+5. apply the caller’s signature policy to the verified key, policy-id, and requested keys.
 
-A signature over only the metadata payload is insufficient. A missing metadata/target/signature
-is a normal unsigned module unless an embedding policy requires them. Existing `signature2`
+A signature over only the metadata payload is insufficient. A manifest is required by this
+signing profile, but a manifest itself need not be signed: a caller in `RespectUnstable` mode may
+respect a well-formed unsigned manifest from the start. A missing metadata/target/signature is a
+normal unsigned module unless an embedding policy requires a signature. Existing `signature2`
 read/render APIs remain unchanged; `wasmsign3` must provide separate v1 APIs and explicit
 migration tests.
 
@@ -212,7 +218,13 @@ migration tests.
 pub trait WasmMetadataContext {
     fn metadata_snapshot(&self) -> MetadataSnapshot;
     fn metadata(&self) -> Option<&WasmSemanticMetadata>;
-    fn metadata_trust(&self) -> MetadataTrust;
+    fn metadata_mode(&self) -> MetadataMode;
+}
+
+pub enum MetadataMode {
+    Ignore,
+    RespectUnstable,
+    RequireSignature(SignaturePolicy),
 }
 
 pub trait WasmMetadataMutContext: WasmMetadataContext {
@@ -223,8 +235,11 @@ pub trait WasmMetadataMutContext: WasmMetadataContext {
 
 The concrete Context may hold an owned map, an immutable borrowed map, or a digest-addressed
 sidecar resolver. `MetadataSnapshot` participates in lazy body/function cache identity whenever
-a transform reads metadata. `MetadataTrust` distinguishes `UntrustedParsed`, `LocallyInferred`,
-`Validated`, and `SignatureVerified { policy_id, key_id }`; it is not forgeable by the map.
+a transform reads metadata. The metadata map carries no source or trust class: consumers select
+behavior through `MetadataMode` (preferably as a type parameter/newtype at pipeline construction,
+not an ambient global). `RespectUnstable` is the initial opt-in ABI and respects a well-formed
+manifest regardless of where it came from; `RequireSignature` additionally requires a successful
+`wasmsign3` binding/signature verification.
 
 Wax lazy wrappers may inspect immutable metadata while being described, but mutable Context and
 body iteration remain resolution-time only. A wrapper/pass declares the key prefixes it reads and
@@ -243,20 +258,21 @@ backend. Add a small `portal-pc-waffle-metadata` adapter (or a narrowly scoped
 `waffle-passes` module) with no dependency on Volar, Dreamcomp, Speet, or Moond:
 
 1. **Import pass:** find `portal.wasm.meta.v1`, decode it with limits, attach an immutable
-   `WasmSemanticMetadata` sidecar to the pass context, and retain original bytes/provenance.
-2. **Verify pass:** compute section-aware code/data/interface hashes from the Waffle module or
-   original bytes; validate memory ranges and standard-key consistency. It returns facts with a
-   trust state, never merely `bool`.
+   `WasmSemanticMetadata` sidecar to the pass context, and retain original canonical bytes.
+2. **Binding-check pass:** on request, compute section-aware code/data/interface hashes from the
+   Waffle module or original bytes and validate memory ranges/standard-key consistency. This is
+   required by `RequireSignature`, but is not a provenance or trust classifier.
 3. **Infer/normalize pass:** derive conservative layout facts from declarations/data segments and
    optional bounded analysis, then emit canonical WSMM. Inference must mark unknown dynamic
    access rather than invent unused ranges.
-4. **Use pass API:** passes request named verified facts (`memory/0/used`,
-   `semantics/indirect_targets`, etc.) and receive a diagnostic when trust/policy is insufficient.
-   Traditional optimizers can use these facts for dead-data removal, fixed-bound allocation,
-   range-check simplification, function-closure selection, and memory representation choice.
+4. **Use pass API:** passes request named facts (`memory/0/used`,
+   `table/0/indirect_targets`, etc.) through `Ignore`, `RespectUnstable`, or `RequireSignature`
+   context types. Traditional optimizers can use respected facts for dead-data removal,
+   fixed-bound allocation, range-check simplification, function-closure selection, and memory
+   representation choice.
 5. **Rewrite hygiene:** any Waffle transform that changes a covered section records invalidation;
    the backend either writes regenerated metadata and a newly generated signature target or drops
-   stale WSMM/signature sections. It must never blindly copy old signed metadata after a rewrite.
+   stale WSMM/signature sections. It must never blindly copy a stale signed target after a rewrite.
 
 The same pass API works from a Wax `WasmMetadataContext`; Waffle need not construct a whole
 external Context merely to parse a custom section. Conversely, Wax does not become a whole-module
@@ -266,26 +282,34 @@ optimizer or scheduler.
 
 ### 7.1 Volar
 
-Volar’s Waffle/VAFFLE route imports verified metadata before lowering body facets. It uses:
+Volar’s Waffle/VAFFLE route imports metadata before lowering body facets. Its initial explicit
+`RespectUnstable` pipeline type respects any well-formed manifest, so existing consumers gain the
+allocation benefit immediately; deployments needing authentication select `RequireSignature`.
+It uses:
 
 - memory page bounds, address width, and used/reserved ranges to choose compact storage and avoid
   constructing bit-vector/pre-initialization state for proven-unused memory;
 - data descriptors/hashes to keep only selected data materialization in the reachable closure;
-- ABI, interface, and indirect-target facts to validate selected-function closure policy; and
+- ABI, interface, and per-table indirect-target facts to validate selected-function closure
+  policy; and
 - metadata snapshot/hash as part of `pipeline-wasm` and lazy wrapper cache keys.
 
-`volar-vaffle-target` retains conservative full-memory behavior when metadata is absent,
-untrusted, inconsistent, dynamically unknown, or incompatible with an IR operation. No
-cryptographic/proving discipline, provenance, or ZK/non-ZK boundary is weakened. Generated
-output tests must compile and run both metadata-enabled and fallback modules.
+`volar-vaffle-target` retains conservative full-memory behavior when its pipeline type is
+`Ignore`, metadata is absent or malformed, memory access is dynamically unknown, or a fact is
+incompatible with an IR operation. `RespectUnstable` is intentionally an unstable ABI until the
+manifest contract stabilizes; it must not silently become an authentication policy. No
+cryptographic/proving discipline or ZK/non-ZK boundary is weakened. Generated output tests must
+compile and run both metadata-enabled and fallback modules.
 
 ### 7.2 Dreamcomp
 
-Dreamcomp imports the same map into `DreamcompModuleSession`/its WASM module provider. A
-selected `MItem::WasmFunc` uses memory layout and data descriptors to avoid eagerly expanding
+Dreamcomp imports the same map into `DreamcompModuleSession`/its WASM module provider. Its
+`RespectUnstable` module-provider type consumes a well-formed manifest immediately; a separate
+`RequireSignature` type is available where authentication is required. A selected
+`MItem::WasmFunc` uses memory layout and data descriptors to avoid eagerly expanding
 unreferenced data-backed state or allocating Fast-IR/MiniBC representation for declared-unused
-ranges. It records the WSMM snapshot together with module bytes, plugin/isolate state, and
-provenance; cache reuse across a changed layout/signature is forbidden.
+ranges. It records the WSMM snapshot together with module bytes and plugin/isolate state; cache
+reuse across a changed layout or selected metadata mode is forbidden.
 
 The private Dreamcomp E2E suite owns tests that execute byte-backed modules with and without
 WSMM and verifies equivalent results, reduced represented memory for valid bounded layouts, and
@@ -322,20 +346,21 @@ and unsigned API remain compatibility paths.
    valid/invalid vectors. Resolve whether passive-data descriptors need an additional module
    policy key before freezing v1.
 2. **`wax-meta`:** implement no-`std + alloc` typed map, canonical codec, limits, digest helpers,
-   Context traits, provenance/trust state, and round-trip/property tests.
+   `Ignore`/`RespectUnstable`/`RequireSignature` Context types, and round-trip/property tests.
 3. **`wasmsign3`:** add independent target/signature section parser/renderer and verifier API;
-   preserve `signature2`; test code/data/interface mutation rejection and Context-vs-section
-   byte equality.
-4. **Waffle:** add import/verify/infer/use/invalidation passes plus backend emission support;
-   test that a pass can use verified facts and that any covered rewrite clears/rebuilds signatures.
+   preserve `signature2`; test code/data/interface (including element segment) mutation rejection
+   and Context-vs-section byte equality. Require a manifest for this signing profile only.
+4. **Waffle:** add import/binding-check/infer/use/invalidation passes plus backend emission
+   support; test that a `RespectUnstable` pass can use facts from the start and that any covered
+   rewrite clears/rebuilds signatures.
 5. **Emitters:** add Speet and Moond builders behind explicit metadata options, then signed output
    options. Test their output with `wasmparser`, Waffle, and `wasmsign3` verification.
 6. **Consumers:** integrate Volar first at VAFFLE memory lowering, then Dreamcomp’s private
-   WASM/Fast-IR path. Ship in observation mode (parse/measure/fallback) before allowing verified
-   layout facts to reduce allocation.
-7. **Defaulting:** enable only for locally inferred or signature-verified metadata after parity,
-   resource-use benchmarks, and invalidation tests. Retain an explicit metadata-off path through
-   one migration cycle.
+   WASM/Fast-IR path. Enable the explicit `RespectUnstable` path from the start (with an
+   `Ignore` fallback); benchmark and test it before the ABI is declared stable.
+7. **Stabilization:** freeze the respecting ABI after parity, resource-use benchmarks, and
+   invalidation tests. Keep `RequireSignature` an independent consumer choice rather than making
+   it the implicit meaning of metadata.
 
 ## 9. Test and acceptance matrix
 
@@ -343,11 +368,11 @@ and unsigned API remain compatibility paths.
 |---|---|
 | `wax-meta` | `no_std + alloc` build; canonical ordering/minimal-integer/duplicate rejection; bounded streaming parse; Context/section equality; snapshot invalidation. |
 | `wasmsign3` | deterministic target vectors; signatures reject changed code, data, interface, semantic map, policy-id, or signer context; existing `signature2` compatibility remains unchanged. |
-| Waffle | custom section round trip; verified fact exposure to an independent pass; unknown/untrusted facts do not optimize; code/data/memory rewrite invalidates signatures; ordinary optimizer output validates. |
-| Speet | synthetic Context and emitted section have identical WSMM bytes; frozen-index/data/ABI facts match final module; signed output validates; dynamic/trap paths do not overclaim unused memory. |
-| Moond | sparse and exhaustive plans emit correct closure/layout metadata; fixed register ranges are exact; output validates and signatures reject AGC code/data changes; legacy unsigned output remains byte/behavior compatible. |
-| Volar | metadata-enabled and fallback generated outputs compile/run equivalently; only verified bounded regions reduce allocation; dynamic/unknown memory falls back; provenance and discipline tests remain intact. |
-| Dreamcomp | private byte-backed lazy-WASM E2E parity; requested export does not materialize unrelated body/data state; changed metadata snapshot misses cache; invalid/untrusted map falls back safely. |
+| Waffle | custom section round trip; `RespectUnstable` fact exposure to an independent pass; `Ignore` does not optimize; code/data/memory/table-element rewrite invalidates signatures; ordinary optimizer output validates. |
+| Speet | synthetic Context and emitted section have identical WSMM bytes; frozen-index/data/ABI/table-element facts match final module; signed output validates; dynamic/trap paths do not overclaim unused memory. |
+| Moond | sparse and exhaustive plans emit correct closure/layout metadata; fixed register ranges are exact; output validates and signatures reject AGC code/data/table-element changes; legacy unsigned output remains byte/behavior compatible. |
+| Volar | `RespectUnstable` metadata-enabled and `Ignore` fallback outputs compile/run equivalently; declared bounded regions reduce allocation from the start; dynamic/unknown memory falls back; discipline tests remain intact. |
+| Dreamcomp | private byte-backed `RespectUnstable` lazy-WASM E2E parity; requested export does not materialize unrelated body/data state; changed metadata snapshot or mode misses cache; malformed map falls back safely. |
 | Cross-repository | Speet and Moond outputs are accepted by Wax/Waffle and `wasmsign3`; Volar and private Dreamcomp consume the same fixtures without producer-specific parser branches. |
 
 ## 10. Non-goals and open decisions
@@ -358,15 +383,17 @@ and unsigned API remain compatibility paths.
 - The final RFC must choose the standardized semantic-extension registry process, sidecar
   transport framing, maximum default parser limits, and whether multiple independently signed
   targets may coexist.
-- Before trusting `unused` ranges for a transformation that removes checks or changes observable
-  traps, each consumer needs a scoped proof/validation rule; allocation reduction alone may use a
-  weaker but still verified resource contract.
+- Before respecting `unused` ranges for a transformation that removes checks or changes observable
+  traps, each consumer needs a scoped proof/validation rule. `RespectUnstable` may immediately
+  use the resource contract for allocation/storage reduction; it must not implicitly authorize
+  observable semantic changes.
 
 ## 11. Completion criteria
 
 This plan is complete when one canonical WSMM implementation is shared through Wax Context and
 WASM custom sections; `wasmsign3` verifies a target binding semantic metadata with code, data,
-and interface hashes; Waffle can validate/infer/use/invalidate it as an independent pass; Speet
-and Moond can emit it; and Volar and private Dreamcomp demonstrably reduce selected memory
-representation only when verified metadata permits it, while unsigned, malformed, changed, or
-dynamically unknown inputs retain correct conservative behavior.
+and interface hashes (including table elements); Waffle can bind-check/infer/use/invalidate it as
+an independent pass; Speet and Moond can emit it; and Volar and private Dreamcomp demonstrably
+reduce selected memory representation under their explicit `RespectUnstable` mode from the start,
+while `Ignore`, absent, malformed, changed, or dynamically unknown inputs retain correct
+conservative behavior.
