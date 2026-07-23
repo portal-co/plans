@@ -361,7 +361,18 @@ Use existing project log facilities; the shared crate itself remains logging-fre
 | Speet | Multi-binary index-layout parity, selected-unit-only translation, per-word/possible-instruction function-sketch feed counts, lazy per-function instruction fetch assertions, synthetic `Context` metadata/source-provider handoff to the Volar Wax/Waffle frontend without a serialized WASM module, explicit full-processing (including dynamic static-address) coverage, PLT import/ambient redirect parity, `wasmparser` validation. |
 | Wax / Waffle / wasm-blitz | Root-specific reachable-function closure tests covering direct, `ref.func`, table/element, import, and declared-indirect edges; `Context` capability tests for module/output metadata, symbolic ambient lookup, and execution/constant-state observation; assert no instruction iteration or mutable-context query during wrapper construction and no Waffle IR/assembly for unreachable functions; eager/lazy byte and `wasmparser` parity; existing `ProbePlan` control-flow count test plus backend byte/behavior parity and “no probes means no plan scan” instrumentation. |
 | Moond | C/WASM existing tests, `wasmparser` validation, one-function-per-word/possible-instruction sketch-feed tests, lazy per-function fetch assertions, opt-in full-processing coverage for dynamically-computed static addresses, sparse reachable-plan count tests, exhaustive-vs-sparse behavior parity, indirect/EXTEND/NDX regression cases. |
+| Cross-repository lazy-WASM contract | Volar owns a public `volar-vaffle-target` fixture that parses a two-body byte-backed module, lowers only its selected lazy export, and verifies the sibling remains `FuncDecl::Lazy`. Dreamcomp owns the equivalent full private lowering/interpretation fixture because its compiler internals are not a public dependency. Both fixtures use the same minimal byte-backed module shape, so Waffle frontend behavior is exercised through two independent consumers. Moond's sparse-plan fixture remains in moond and exercises its Speet/yecta integration, including the current trap-cell and reactor-sealing APIs. |
 | Grabb | Only once batching exists: SWC hygiene/span and printed-JS golden tests, plus demand count assertions. |
+
+### Cross-repository test dependency graph
+
+Keep production crate dependencies one-directional: `moond → speet` (through
+`yecta`/`speet-traps`), while Volar and Dreamcomp independently consume the shared
+Waffle frontend/lazy-body contract. The Volar fixture must not depend on private
+Dreamcomp crates. Dreamcomp's equivalent fixture belongs in its private
+`dreamcompiler-e2e-tests` crate and may depend on its own lowering crates only.
+This graph prevents an integration test from making either public consumer depend on
+the other while still detecting incompatible Waffle/Speet/Moond boundary changes.
 
 Benchmark each migrated route on a representative small root and a large input. Report wall time, peak allocated bytes where available, described nodes, resolved nodes, emitted functions/blocks/instructions, and output equivalence. A lazy implementation that increases work for small roots or changes selected output is not ready to become default.
 
