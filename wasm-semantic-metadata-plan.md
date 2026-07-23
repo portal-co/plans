@@ -1,11 +1,33 @@
 # WASM semantic metadata and signed resource contracts
 
-**Status:** proposed cross-repository design  
-**Owners:** `wax`, `waffle-`, `wasmsign3`, `volar`, `dreamcomp`, `speet`, and `moond`  
+**Status:** v0.1 foundation implemented; hash derivation/signature-section transport remain iterative
+**Owners:** `wax`, `waffle-`, `wasmsign3`, `volar`, `dreamcomp`, `speet`, and `moond`
 **Primary outcome:** a deterministic, portable WASM metadata map that can travel in a
 custom section or an embedding `Context`, can be independently verified and signed,
 and gives compilers/optimizers validated facts about memory, code, data, ABI, and
 program semantics without forcing them to rediscover or materialize the whole module.
+
+## Current v0.1 delivery
+
+The initial implementation deliberately establishes the source-neutral API and immediate
+storage benefit before freezing the ABI:
+
+- `wax-meta` provides a `no_std + alloc` canonical WSMM codec, bounded decoder, typed values,
+  semantic snapshot, domain hash helpers, and `Ignore`/`RespectUnstable`/`RequireSignature`
+  Context modes.
+- Waffle carries canonical WSMM custom-section bytes through `Module`, with explicit import,
+  replacement, removal, and selected-mode accessors.
+- `wasmsign3` exposes `WsmmSigningTargetV1`, binding code, data, interface (including table
+  elements), and semantic digests into deterministic SLH-DSA signing bytes.
+- Speet and Moond expose unsigned WSMM emission helpers; Moond also supplies its conservative
+  direct-AGC register layout manifest.
+- Volar and Dreamcomp default their explicit v0.1 consumer mode to `RespectUnstable` and omit
+  active data segments wholly declared unused, reducing represented storage. Their `Ignore`
+  mode retains legacy full materialization.
+
+The v0.1 ABI is intentionally unstable. A future iteration will add canonical module-section
+hash derivation adapters, target/signature custom-section rendering, richer Waffle validation
+passes, and authenticated consumer plumbing without changing the source-neutral manifest rule.
 
 ## 1. Problem and scope
 
